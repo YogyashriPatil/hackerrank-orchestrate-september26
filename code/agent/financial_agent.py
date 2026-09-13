@@ -1,24 +1,26 @@
 """
-Model 8: Financial Agent Orchestrator
-=====================================
+Model 8 — Financial Agent Orchestrator
+=======================================
 
 Buy or Wait? - HackerRank Orchestrate
 
-Connects:
+Pipeline:
 
-    Model 1  -> Dataset Loader
-    Model 2  -> Financial State
-    Model 3  -> Evidence Resolution
-    Model 4  -> 90-Day Cash-Flow Forecast
-    Model 5  -> Affordability Engine
-    Model 6  -> Payment Plan Optimizer
-    Model 7  -> Final Decision Engine
-    Model 10 -> Grounded Explanation Engine
-
-The FinancialAgent is an orchestrator.
-
-It does NOT independently invent financial rules.
-It passes the correct information between models.
+    Model 1  Dataset Loader
+        ↓
+    Model 2  Financial State
+        ↓
+    Model 3  Evidence Resolver
+        ↓
+    Model 4  Cash-Flow Forecast
+        ↓
+    Model 5  Affordability
+        ↓
+    Model 6  Payment Optimizer
+        ↓
+    Model 7  Decision Engine
+        ↓
+    Model 10 Explanation Engine
 """
 
 from __future__ import annotations
@@ -38,32 +40,18 @@ from ..models.decision_engine import DecisionEngine
 from ..models.explanation_engine import ExplanationEngine
 
 
-# ============================================================
-# FINANCIAL AGENT
-# ============================================================
-
 class FinancialAgent:
-    """
-    End-to-end Buy or Wait? financial agent.
-
-    Parameters
-    ----------
-    dataset_path:
-        Path to the participant-facing dataset directory.
-    """
 
     def __init__(
         self,
         dataset_path: str = "dataset",
     ) -> None:
 
-        self.dataset_path = Path(
-            dataset_path
-        )
+        self.dataset_path = Path(dataset_path)
 
-        # ----------------------------------------------------
-        # MODEL 1 — DATASET LOADER
-        # ----------------------------------------------------
+        # ====================================================
+        # MODEL 1
+        # ====================================================
 
         self.loader = DatasetLoader(
             self.dataset_path
@@ -71,92 +59,124 @@ class FinancialAgent:
 
         self.loader.load()
 
-        # ----------------------------------------------------
-        # MODEL 2 — FINANCIAL STATE
-        # ----------------------------------------------------
+        # ====================================================
+        # MODEL 2
+        # ====================================================
 
-        self.state_builder = (
-            FinancialStateBuilder(
-                self.loader
-            )
+        self.state_builder = FinancialStateBuilder(
+            self.loader
         )
 
-        # ----------------------------------------------------
-        # MODEL 3 — EVIDENCE RESOLUTION
-        # ----------------------------------------------------
+        # ====================================================
+        # MODEL 3
+        # ====================================================
 
-        self.evidence_resolver = (
-            EvidenceResolver(
-                self.loader
-            )
+        self.evidence_resolver = EvidenceResolver(
+            self.loader
         )
 
-        # ----------------------------------------------------
-        # MODEL 4 — CASH-FLOW FORECAST
-        # ----------------------------------------------------
+        # ====================================================
+        # MODEL 4
+        # ====================================================
 
-        self.forecaster = (
-            CashFlowForecaster(
-                horizon_days=90
-            )
+        self.forecaster = CashFlowForecaster(
+            horizon_days=90
         )
 
-        # ----------------------------------------------------
-        # MODEL 5 — AFFORDABILITY
-        # ----------------------------------------------------
+        # ====================================================
+        # MODEL 5
+        # ====================================================
 
-        self.affordability_engine = (
-            AffordabilityEngine()
-        )
+        self.affordability_engine = AffordabilityEngine()
 
-        # ----------------------------------------------------
-        # MODEL 6 — PAYMENT PLAN OPTIMIZER
-        #
-        # IMPORTANT:
-        #
-        # Do NOT pass payment options here.
-        #
-        # The active optimize() implementation expects the
-        # payment options indirectly through the optimizer's
-        # payment_options attribute.
-        # ----------------------------------------------------
+        # ====================================================
+        # MODEL 6
+        # ====================================================
 
-        self.payment_optimizer = (
-            PaymentPlanOptimizer()
-        )
+        self.payment_optimizer = PaymentPlanOptimizer()
 
-        # ----------------------------------------------------
-        # MODEL 7 — DECISION ENGINE
-        # ----------------------------------------------------
+        # ====================================================
+        # MODEL 7
+        # ====================================================
 
-        self.decision_engine = (
-            DecisionEngine()
-        )
+        self.decision_engine = DecisionEngine()
 
-        # ----------------------------------------------------
-        # MODEL 10 — EXPLANATION ENGINE
-        # ----------------------------------------------------
+        # ====================================================
+        # MODEL 10
+        # ====================================================
 
-        self.explanation_engine = (
-            ExplanationEngine()
+        self.explanation_engine = ExplanationEngine()
+
+    # ========================================================
+    # GENERIC GETTER
+    # ========================================================
+
+    @staticmethod
+    def _get(
+        obj: Any,
+        field: str,
+        default: Any = None,
+    ) -> Any:
+
+        if obj is None:
+            return default
+
+        if isinstance(obj, dict):
+            return obj.get(field, default)
+
+        try:
+            if hasattr(obj, "get"):
+                value = obj.get(field, default)
+
+                if value is not None:
+                    return value
+        except Exception:
+            pass
+
+        return getattr(
+            obj,
+            field,
+            default,
         )
 
     # ========================================================
-    # REQUEST LOOKUP
+    # DATE FORMAT
+    # ========================================================
+
+    @staticmethod
+    def _format_date(
+        value: Any,
+    ) -> Optional[str]:
+
+        if value is None:
+            return None
+
+        try:
+
+            ts = pd.to_datetime(
+                value,
+                errors="coerce",
+            )
+
+            if pd.isna(ts):
+                return None
+
+            return pd.Timestamp(ts).strftime(
+                "%Y-%m-%d"
+            )
+
+        except Exception:
+
+            return None
+
+    # ========================================================
+    # REQUEST
     # ========================================================
 
     def get_request(
         self,
         request_id: str,
     ) -> pd.Series:
-        """
-        Retrieve one evaluation request.
-
-        Parameters
-        ----------
-        request_id:
-            Request identifier from requests.csv.
-        """
 
         if self.loader.data is None:
             raise RuntimeError(
@@ -167,21 +187,16 @@ class FinancialAgent:
             request_id
         ).strip()
 
-        requests = (
-            self.loader.data.requests
-        )
+        requests = self.loader.data.requests
 
         matches = requests[
-            requests[
-                "request_id"
-            ]
+            requests["request_id"]
             .astype(str)
             .str.strip()
             == request_id
         ]
 
         if matches.empty:
-
             raise ValueError(
                 f"Request '{request_id}' "
                 f"was not found in requests.csv"
@@ -197,9 +212,6 @@ class FinancialAgent:
         self,
         request_id: str,
     ) -> pd.DataFrame:
-        """
-        Return payment options belonging only to one request.
-        """
 
         if self.loader.data is None:
             raise RuntimeError(
@@ -214,112 +226,19 @@ class FinancialAgent:
             return pd.DataFrame()
 
         return options.copy()
-    # ========================================================
-    # GENERIC ATTRIBUTE GETTER
-    # ========================================================
-
-    @staticmethod
-    def _get(
-        obj: Any,
-        field: str,
-        default: Any = None,
-    ) -> Any:
-        """
-        Read a field from either a dictionary, pandas Series,
-        dataclass/object, or other compatible object.
-        """
-
-        if obj is None:
-            return default
-
-        if isinstance(
-            obj,
-            dict,
-        ):
-            return obj.get(
-                field,
-                default,
-            )
-
-        try:
-
-            if hasattr(
-                obj,
-                "get",
-            ):
-
-                value = obj.get(
-                    field,
-                    default,
-                )
-
-                if value is not None:
-                    return value
-
-        except Exception:
-            pass
-
-        return getattr(
-            obj,
-            field,
-            default,
-        )
 
     # ========================================================
-    # DATE FORMATTER
-    # ========================================================
-
-    @staticmethod
-    def _format_date(
-        value: Any,
-    ) -> Optional[str]:
-        """
-        Convert a date-like value to YYYY-MM-DD.
-        """
-
-        if value is None:
-            return None
-
-        try:
-
-            timestamp = pd.to_datetime(
-                value,
-                errors="coerce",
-            )
-
-            if pd.isna(timestamp):
-                return None
-
-            return pd.Timestamp(
-                timestamp
-            ).strftime(
-                "%Y-%m-%d"
-            )
-
-        except Exception:
-
-            return None
-
-    # ========================================================
-    # RUN AGENT
+    # RUN
     # ========================================================
 
     def run(
         self,
         request_id: str,
     ) -> Dict[str, Any]:
-        """
-        Run the complete financial decision pipeline.
 
-        Returns
-        -------
-        dict
-            Structured final result suitable for main.py.
-        """
-
-        # ----------------------------------------------------
-        # STEP 1 — REQUEST
-        # ----------------------------------------------------
+        # ====================================================
+        # 1. REQUEST
+        # ====================================================
 
         request = self.get_request(
             request_id
@@ -347,15 +266,35 @@ class FinancialAgent:
                 "request_date",
             ),
             errors="coerce",
-        ).normalize()
+        )
 
-        if pd.isna(
-            request_date
-        ):
+        if pd.isna(request_date):
             raise ValueError(
                 f"Invalid request_date "
                 f"for {request_id}"
             )
+
+        request_date = pd.Timestamp(
+            request_date
+        ).normalize()
+
+        desired_completion_date = pd.to_datetime(
+            self._get(
+                request,
+                "desired_completion_date",
+            ),
+            errors="coerce",
+        )
+
+        if pd.isna(
+            desired_completion_date
+        ):
+            desired_completion_date = None
+
+        else:
+            desired_completion_date = pd.Timestamp(
+                desired_completion_date
+            ).normalize()
 
         requested_amount = float(
             self._get(
@@ -366,106 +305,85 @@ class FinancialAgent:
             or 0.0
         )
 
-        desired_completion_date = pd.to_datetime(
-            self._get(
-                request,
-                "desired_completion_date",
-            ),
-            errors="coerce",
-        ).normalize()
+        # ====================================================
+        # 2. FINANCIAL STATE
+        # ====================================================
 
-        if pd.isna(
-            desired_completion_date
-        ):
-            raise ValueError(
-                f"Invalid desired_completion_date "
-                f"for {request_id}"
-            )
-
-        # ----------------------------------------------------
-        # STEP 2 — FINANCIAL STATE
-        # ----------------------------------------------------
-
-        state = (
-            self.state_builder.build(
-                user_id=user_id,
-                as_of_date=request_date,
-            )
+        state = self.state_builder.build(
+            user_id=user_id,
+            as_of_date=request_date,
         )
 
-        # ----------------------------------------------------
-        # STEP 3 — EVIDENCE RESOLUTION
-        # ----------------------------------------------------
+        # ====================================================
+        # 3. EVIDENCE
+        # ====================================================
 
         resolved_events = (
-            self.evidence_resolver
-            .resolve_state(
+            self.evidence_resolver.resolve_state(
                 state
             )
         )
 
-        # ----------------------------------------------------
-        # STEP 4 — 90-DAY CASH-FLOW FORECAST
-        # ----------------------------------------------------
+        # ====================================================
+        # 4. CASH-FLOW FORECAST
+        # ====================================================
 
-        forecast = (
-            self.forecaster.forecast(
-                state=state,
-                resolved_events=resolved_events,
-                as_of_date=request_date,
-            )
+        forecast = self.forecaster.forecast(
+            state=state,
+            resolved_events=resolved_events,
+            as_of_date=request_date,
         )
 
-        # ----------------------------------------------------
-        # STEP 5 — AFFORDABILITY
-        # ----------------------------------------------------
-
-        currency = getattr(
-            state,
-            "home_currency",
-            None,
-        )
+        # ====================================================
+        # 5. AFFORDABILITY
+        # ====================================================
 
         affordability = (
-            self.affordability_engine
-            .assess(
+            self.affordability_engine.assess(
                 state=state,
                 forecast=forecast,
                 purchase_price=requested_amount,
-                currency=currency,
+                currency=getattr(
+                    state,
+                    "home_currency",
+                    None,
+                ),
                 request_id=request_id,
             )
         )
 
-        # ----------------------------------------------------
-        # STEP 6 — PAYMENT OPTIONS
-        # ----------------------------------------------------
+        # ====================================================
+        # 6. PAYMENT OPTIONS
+        #
+        # IMPORTANT:
+        #
+        # This MUST be request-specific.
+        # ====================================================
 
-        payment_options = self.get_payment_options(request_id)
-        # FinancialStateBuilder stores the user's payment
-        # preferences in accepted_payment_methods.
-        # Keep a compatibility fallback for older state objects.
-        accepted_methods = getattr(
-            state,
-            "accepted_payment_methods",
-            None,
+        payment_options = (
+            self.get_payment_options(
+                request_id
+            )
         )
 
-        if accepted_methods is None:
-            accepted_methods = getattr(
+        # ====================================================
+        # USER PAYMENT PREFERENCES
+        #
+        # FinancialState calls this:
+        #
+        #     accepted_payment_methods
+        #
+        # not payment_methods_user_will_consider.
+        # ====================================================
+
+        accepted_methods = list(
+            getattr(
                 state,
-                "payment_methods_user_will_consider",
+                "accepted_payment_methods",
                 [],
             )
-
-        # Be defensive if a state implementation returns a
-        # pipe-separated string instead of a list.
-        if isinstance(accepted_methods, str):
-            accepted_methods = [
-                item.strip()
-                for item in accepted_methods.split("|")
-                if item.strip()
-            ]
+            or []
+        )
 
         max_installment_months = getattr(
             state,
@@ -473,85 +391,37 @@ class FinancialAgent:
             None,
         )
 
-        # ----------------------------------------------------
-        # Values from Model 5
-        # ----------------------------------------------------
+        allows_partial_payment = bool(
+            self._get(
+                request,
+                "allows_partial_payment",
+                False,
+            )
+        )
 
         amount_safe_to_pay = float(
             getattr(
                 affordability,
                 "amount_safe_to_pay",
-                getattr(
-                    affordability,
-                    "safe_amount",
-                    0.0,
-                ),
+                0.0,
             )
             or 0.0
         )
 
-        # Keep the value inside the challenge contract.
-        amount_safe_to_pay = max(
-            0.0,
-            min(
-                amount_safe_to_pay,
-                requested_amount,
-            ),
-        )
-
-        earliest_date_for_full_payment = getattr(
+        earliest_safe_date = getattr(
             affordability,
             "earliest_safe_date",
-            getattr(
-                affordability,
-                "earliest_date_for_full_payment",
-                None,
-            ),
+            None,
         )
 
-        # Some affordability implementations may use a
-        # different field name. Try several compatible names.
-        if earliest_date_for_full_payment is None:
-
-            earliest_date_for_full_payment = getattr(
-                affordability,
-                "full_payment_safe_date",
-                None,
-            )
-
-        # If Model 5 says the purchase is immediately
-        # affordable, the specification requires the earliest
-        # safe date to be request_date.
-        immediate_affordable = bool(
-            getattr(
-                affordability,
-                "immediate_affordable",
-                False,
-            )
-        )
-
-        if immediate_affordable:
-
-            earliest_date_for_full_payment = (
-                request_date
-            )
-
-        # ----------------------------------------------------
-        # MODEL 6 — PAYMENT PLAN OPTIMIZER
-        # ----------------------------------------------------
+        # ====================================================
+        # 7. PAYMENT OPTIMIZATION
         #
-        # IMPORTANT:
-        # Use the request-specific payment_options already
-        # loaded above. Do NOT call get_payment_options()
-        # without request_id.
-        #
-        # The active optimizer accepts the explicit argument
-        # payment_options, so pass the DataFrame directly.
-        # ----------------------------------------------------
+        # Use the current optimizer API.
+        # ====================================================
 
         payment_result = (
-            self.payment_optimizer
-            .optimize(
+            self.payment_optimizer.optimize(
                 request_id=request_id,
                 request_date=request_date,
                 requested_amount=requested_amount,
@@ -568,14 +438,10 @@ class FinancialAgent:
                     amount_safe_to_pay
                 ),
                 earliest_date_for_full_payment=(
-                    earliest_date_for_full_payment
+                    earliest_safe_date
                 ),
-                allows_partial_payment=bool(
-                    self._get(
-                        request,
-                        "allows_partial_payment",
-                        False,
-                    )
+                allows_partial_payment=(
+                    allows_partial_payment
                 ),
                 payment_options=(
                     payment_options
@@ -583,369 +449,150 @@ class FinancialAgent:
             )
         )
 
-        # ----------------------------------------------------
-        # STEP 7 — FINAL DECISION
-        # ----------------------------------------------------
+        # ====================================================
+        # 8. FINAL DECISION
+        # ====================================================
 
-        decision = (
-            self.decision_engine
-            .decide(
-                request=request,
-                state=state,
-                forecast=forecast,
-                affordability=affordability,
-                payment_result=payment_result,
-            )
+        decision = self.decision_engine.decide(
+            request=request,
+            state=state,
+            forecast=forecast,
+            affordability=affordability,
+            payment_result=payment_result,
         )
 
-        # ----------------------------------------------------
-        # STEP 8 — MODEL 10 EXPLANATION
-        # ----------------------------------------------------
-
-        decision_earliest_date = getattr(
-            decision,
-            "earliest_safe_date",
-            None,
-        )
+        # ====================================================
+        # 9. EXPLANATION
+        # ====================================================
 
         decision_payload = {
 
-            "request_id": (
-                decision.request_id
-            ),
+            "request_id":
+                decision.request_id,
 
-            "user_id": (
-                decision.user_id
-            ),
+            "user_id":
+                decision.user_id,
 
-            "decision": (
-                decision.decision
-            ),
+            "decision":
+                decision.decision,
 
-            "safe_amount": (
-                decision.safe_amount
-            ),
+            "safe_amount":
+                decision.safe_amount,
 
-            "requested_amount": (
-                decision.requested_amount
-            ),
+            "requested_amount":
+                decision.requested_amount,
 
-            "currency": (
-                decision.currency
-            ),
+            "currency":
+                decision.currency,
 
-            "payment_method": (
-                decision.payment_method
-            ),
+            "payment_method":
+                decision.payment_method,
 
-            "payment_option_id": (
-                decision.payment_option_id
-            ),
+            "payment_option_id":
+                decision.payment_option_id,
 
-            "payment_plan": (
-                decision.payment_plan
-            ),
+            "payment_plan":
+                decision.payment_plan,
 
-            "earliest_safe_date": (
+            "earliest_safe_date":
                 self._format_date(
-                    decision_earliest_date
-                )
-            ),
+                    decision.earliest_safe_date
+                ),
 
-            "spending_changes": (
-                decision.spending_changes
-            ),
+            "spending_changes":
+                decision.spending_changes,
 
-            "reasons": (
-                decision.reasons
-            ),
+            "reasons":
+                decision.reasons,
 
-            "warnings": (
-                decision.warnings
-            ),
+            "warnings":
+                decision.warnings,
 
-            "confidence": (
-                decision.confidence
-            ),
+            "confidence":
+                decision.confidence,
         }
 
         explanation = (
-            self.explanation_engine
-            .explain(
+            self.explanation_engine.explain(
                 decision_payload
             )
         )
 
-        # ----------------------------------------------------
-        # FINAL AGENT RESULT
-        # ----------------------------------------------------
+        # ====================================================
+        # 10. FINAL RESULT
+        # ====================================================
 
         return {
 
-            "request_id": (
-                decision.request_id
-            ),
+            "request_id":
+                decision.request_id,
 
-            "user_id": (
-                decision.user_id
-            ),
+            "user_id":
+                decision.user_id,
 
-            "decision": (
-                decision.decision
-            ),
+            "decision":
+                decision.decision,
 
-            "headline": (
-                explanation.headline
-            ),
+            "headline":
+                explanation.headline,
 
-            "summary": (
-                explanation.summary
-            ),
+            "summary":
+                explanation.summary,
 
-            "requested_amount": (
-                decision.requested_amount
-            ),
+            "requested_amount":
+                decision.requested_amount,
 
-            "safe_amount": (
-                decision.safe_amount
-            ),
+            "safe_amount":
+                decision.safe_amount,
 
-            "currency": (
-                decision.currency
-            ),
+            "currency":
+                decision.currency,
 
-            "payment_method": (
-                decision.payment_method
-            ),
+            "payment_method":
+                decision.payment_method,
 
-            "payment_option_id": (
-                decision.payment_option_id
-            ),
+            "payment_option_id":
+                decision.payment_option_id,
 
-            "payment_plan": (
-                decision.payment_plan
-            ),
+            "payment_plan":
+                decision.payment_plan,
 
-            "earliest_safe_date": (
+            "earliest_safe_date":
                 self._format_date(
                     decision.earliest_safe_date
-                )
-            ),
+                ),
 
-            "financial_impact": (
-                explanation.financial_impact
-            ),
+            "financial_impact":
+                explanation.financial_impact,
 
-            "recommendation": (
-                explanation.recommendation
-            ),
+            "spending_changes":
+                decision.spending_changes,
 
-            "spending_changes": (
-                decision.spending_changes
-            ),
+            "reasons":
+                decision.reasons,
 
-            "reasons": (
-                decision.reasons
-            ),
+            "warnings":
+                decision.warnings,
 
-            "warnings": (
-                decision.warnings
-            ),
+            "recommendation":
+                explanation.recommendation,
 
-            "confidence": (
-                decision.confidence
-            ),
+            "confidence":
+                decision.confidence,
         }
 
 
 # ============================================================
-# PRINT RESULT
-# ============================================================
-
-def print_result(
-    result: Dict[str, Any],
-) -> None:
-
-    print()
-    print("=" * 70)
-    print(
-        "BUY OR WAIT? - FINANCIAL AGENT"
-    )
-    print("=" * 70)
-
-    print(
-        f"\nRequest ID: "
-        f"{result['request_id']}"
-    )
-
-    print(
-        f"User ID: "
-        f"{result['user_id']}"
-    )
-
-    print(
-        "\nFINAL DECISION"
-    )
-
-    print(
-        f"  {str(result['decision']).upper()}"
-    )
-
-    print(
-        f"\nRequested amount: "
-        f"{result['requested_amount']:,.2f} "
-        f"{result['currency']}"
-    )
-
-    print(
-        f"Safe amount: "
-        f"{result['safe_amount']:,.2f} "
-        f"{result['currency']}"
-    )
-
-    if result.get(
-        "payment_method"
-    ):
-
-        print(
-            f"\nPayment method: "
-            f"{result['payment_method']}"
-        )
-
-    if result.get(
-        "payment_option_id"
-    ):
-
-        print(
-            f"Payment option: "
-            f"{result['payment_option_id']}"
-        )
-
-    if result.get(
-        "payment_plan"
-    ):
-
-        print(
-            f"Payment plan: "
-            f"{result['payment_plan']}"
-        )
-
-    if result.get(
-        "earliest_safe_date"
-    ):
-
-        print(
-            f"\nEarliest safe date: "
-            f"{result['earliest_safe_date']}"
-        )
-
-    if result.get(
-        "financial_impact"
-    ):
-
-        print(
-            "\nFINANCIAL IMPACT"
-        )
-
-        for item in result[
-            "financial_impact"
-        ]:
-
-            print(
-                f"  - {item}"
-            )
-
-    print(
-        "\nRECOMMENDATION"
-    )
-
-    print(
-        f"  {result['recommendation']}"
-    )
-
-    if result.get(
-        "spending_changes"
-    ):
-
-        print(
-            "\nSPENDING CHANGES"
-        )
-
-        for item in result[
-            "spending_changes"
-        ]:
-
-            print(
-                f"  - {item}"
-            )
-
-    if result.get(
-        "reasons"
-    ):
-
-        print(
-            "\nWHY"
-        )
-
-        for reason in result[
-            "reasons"
-        ]:
-
-            print(
-                f"  - {reason}"
-            )
-
-    if result.get(
-        "warnings"
-    ):
-
-        print(
-            "\nWARNINGS"
-        )
-
-        for warning in result[
-            "warnings"
-        ]:
-
-            print(
-                f"  - {warning}"
-            )
-
-    print(
-        f"\nConfidence: "
-        f"{float(result['confidence']):.2f}"
-    )
-
-    print(
-        "\n" + "=" * 70
-    )
-
-    print(
-        "FINANCIAL AGENT: SUCCESS"
-    )
-
-    print(
-        "=" * 70
-    )
-
-
-# ============================================================
-# COMMAND-LINE TEST
+# DIRECT TEST
 # ============================================================
 
 if __name__ == "__main__":
 
-    print(
-        "=" * 70
-    )
-
+    print("=" * 70)
     print(
         "BUY OR WAIT? - FINANCIAL AGENT TEST"
     )
-
-    print(
-        "=" * 70
-    )
+    print("=" * 70)
 
     agent = FinancialAgent(
         dataset_path="dataset"
@@ -955,6 +602,20 @@ if __name__ == "__main__":
         "request_26"
     )
 
-    print_result(
-        result
+    print()
+    print("=" * 70)
+    print("FINAL RESULT")
+    print("=" * 70)
+
+    for key, value in result.items():
+
+        print(
+            f"{key}: {value}"
+        )
+
+    print()
+    print("=" * 70)
+    print(
+        "FINANCIAL AGENT: SUCCESS"
     )
+    print("=" * 70)

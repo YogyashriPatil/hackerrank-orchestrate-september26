@@ -1,35 +1,20 @@
 """
-MODEL 7 — FINAL DECISION ENGINE
-===============================
+Model 7: Final Decision Engine
+==============================
 
-Buy or Wait? - HackerRank Orchestrate
+Buy or Wait?
 
-This module combines the outputs of:
+Combines:
+    - FinancialState
+    - CashFlowForecast
+    - AffordabilityAssessment
+    - PaymentPlan
 
-    Model 2 -> Financial State
-    Model 3 -> Evidence Resolution
-    Model 4 -> Cash-Flow Forecast
-    Model 5 -> Affordability Engine
-    Model 6 -> Payment Plan Optimizer
-
-and produces the final decision.
-
-Supported decisions:
-
+Produces:
     affordable_now
     affordable_with_plan
     affordable_later
     not_affordable
-
-Important compatibility rule
-----------------------------
-The current PaymentPlanOptimizer returns a PaymentPlan directly.
-
-Older versions returned an object containing:
-
-    result.best_plan
-
-This implementation supports BOTH formats.
 """
 
 from __future__ import annotations
@@ -46,9 +31,6 @@ import pandas as pd
 
 @dataclass
 class DecisionResult:
-    """
-    Final result produced by Model 7.
-    """
 
     request_id: str
     user_id: str
@@ -81,20 +63,354 @@ class DecisionResult:
 
 
 # ============================================================
-# DECISION ENGINE
+# ENGINE
 # ============================================================
 
 class DecisionEngine:
-    """
-    Deterministic final decision engine.
 
-    This class does not modify financial data.
+    VALID_DECISIONS = {
+        "affordable_now",
+        "affordable_with_plan",
+        "affordable_later",
+        "not_affordable",
+    }
 
-    It only combines the results produced by previous models.
-    """
+    VALID_PAYMENT_METHODS = {
+        "full_payment",
+        "partial_payment",
+        "installments",
+        "wait",
+        "not_recommended",
+    }
 
     # ========================================================
-    # PUBLIC DECISION METHOD
+    # GENERIC GET
+    # ========================================================
+
+    @staticmethod
+    def _get(
+        obj: Any,
+        name: str,
+        default: Any = None,
+    ) -> Any:
+
+        if obj is None:
+            return default
+
+        if isinstance(obj, dict):
+            return obj.get(
+                name,
+                default,
+            )
+
+        try:
+            value = getattr(
+                obj,
+                name,
+            )
+        except Exception:
+            return default
+
+        if value is None:
+            return default
+
+        return value
+
+    # ========================================================
+    # SAFE FLOAT
+    # ========================================================
+
+    @staticmethod
+    def _safe_float(
+        value: Any,
+        default: float = 0.0,
+    ) -> float:
+
+        try:
+
+            if value is None:
+                return default
+
+            value = float(value)
+
+            if pd.isna(value):
+                return default
+
+            return value
+
+        except (
+            TypeError,
+            ValueError,
+        ):
+
+            return default
+
+    # ========================================================
+    # DATE NORMALIZATION
+    # ========================================================
+
+    @staticmethod
+    def _to_timestamp(
+        value: Any,
+    ) -> Optional[pd.Timestamp]:
+
+        if value is None:
+            return None
+
+        try:
+
+            ts = pd.Timestamp(
+                value
+            )
+
+            if pd.isna(ts):
+                return None
+
+            return ts.normalize()
+
+        except (
+            TypeError,
+            ValueError,
+        ):
+
+            return None
+
+    # ========================================================
+    # PAYMENT PLAN EXTRACTION
+    # ========================================================
+
+    def _extract_best_plan(
+        self,
+        payment_result: Any,
+    ) -> Any:
+
+        if payment_result is None:
+            return None
+
+        # New optimizer:
+        #
+        # optimize(...) -> PaymentPlan
+        #
+        if hasattr(
+            payment_result,
+            "payment_method",
+        ):
+
+            method = getattr(
+                payment_result,
+                "payment_method",
+                None,
+            )
+
+            if method not in (
+                None,
+                "",
+                "not_recommended",
+            ):
+
+                return payment_result
+
+        # Old optimizer:
+        #
+        # optimize(...) ->
+        # PaymentOptimizationResult
+        #
+        best_plan = getattr(
+            payment_result,
+            "best_plan",
+            None,
+        )
+
+        if best_plan is not None:
+            return best_plan
+
+        # Dictionary compatibility
+
+        if isinstance(
+            payment_result,
+            dict
+        ):
+
+            plan = payment_result.get(
+                "best_plan"
+            )
+
+            if plan is not None:
+                return plan
+
+            if payment_result.get(
+                "payment_method"
+            ) not in (
+                None,
+                "",
+                "not_recommended",
+            ):
+
+                return payment_result
+
+        return None
+
+    # ========================================================
+    # PAYMENT METHOD
+    # ========================================================
+
+    def _payment_method(
+        self,
+        plan: Any,
+    ) -> Optional[str]:
+
+        if plan is None:
+            return None
+
+        value = self._get(
+            plan,
+            "payment_method",
+        )
+
+        if value is None:
+            value = self._get(
+                plan,
+                "method",
+            )
+
+        if value is None:
+            return None
+
+        value = str(
+            value
+        ).strip()
+
+        if value not in self.VALID_PAYMENT_METHODS:
+            return None
+
+        return value
+
+    # ========================================================
+    # OPTION ID
+    # ========================================================
+
+    def _payment_option_id(
+        self,
+        plan: Any,
+    ) -> Optional[str]:
+
+        if plan is None:
+            return None
+
+        value = self._get(
+            plan,
+            "payment_option_id",
+        )
+
+        if value is None:
+            return None
+
+        return str(
+            value
+        )
+
+    # ========================================================
+    # PLAN TO STRING
+    # ========================================================
+
+    def _plan_to_string(
+        self,
+        plan: Any,
+    ) -> Optional[str]:
+
+        if plan is None:
+            return None
+
+        payments = self._get(
+            plan,
+            "payments",
+            [],
+        )
+
+        if not payments:
+            return None
+
+        result = []
+
+        for payment in payments:
+
+            date = self._get(
+                payment,
+                "date",
+            )
+
+            amount = self._safe_float(
+                self._get(
+                    payment,
+                    "amount",
+                    0,
+                )
+            )
+
+            date = self._to_timestamp(
+                date
+            )
+
+            if date is None:
+                continue
+
+            result.append(
+                f"{date.strftime('%Y-%m-%d')}:{amount:g}"
+            )
+
+        if not result:
+            return None
+
+        return "|".join(
+            result
+        )
+
+    # ========================================================
+    # PLAN IS SAFE
+    # ========================================================
+
+    def _plan_is_safe(
+        self,
+        plan: Any,
+    ) -> bool:
+
+        if plan is None:
+            return False
+
+        safe = self._get(
+            plan,
+            "safe",
+            True,
+        )
+
+        return bool(
+            safe
+        )
+
+    # ========================================================
+    # PLAN DEADLINE
+    # ========================================================
+
+    def _plan_completes_by_deadline(
+        self,
+        plan: Any,
+    ) -> bool:
+
+        if plan is None:
+            return False
+
+        value = self._get(
+            plan,
+            "completes_by_deadline",
+            True,
+        )
+
+        return bool(
+            value
+        )
+
+    # ========================================================
+    # MAIN DECISION
     # ========================================================
 
     def decide(
@@ -105,33 +421,9 @@ class DecisionEngine:
         affordability: Any,
         payment_result: Any,
     ) -> DecisionResult:
-        """
-        Produce the final financial decision.
-
-        Parameters
-        ----------
-        request:
-            Request row from requests.csv.
-
-        state:
-            Financial state produced by Model 2.
-
-        forecast:
-            90-day forecast produced by Model 4.
-
-        affordability:
-            Affordability result produced by Model 5.
-
-        payment_result:
-            Result from Model 6.
-
-        Returns
-        -------
-        DecisionResult
-        """
 
         # ----------------------------------------------------
-        # BASIC REQUEST INFORMATION
+        # REQUEST
         # ----------------------------------------------------
 
         request_id = str(
@@ -146,7 +438,7 @@ class DecisionEngine:
             self._get(
                 request,
                 "user_id",
-                getattr(
+                self._get(
                     state,
                     "user_id",
                     "unknown",
@@ -159,14 +451,6 @@ class DecisionEngine:
                 request,
                 "requested_amount",
                 0,
-            )
-        )
-
-        currency = str(
-            getattr(
-                state,
-                "home_currency",
-                "UNKNOWN",
             )
         )
 
@@ -184,12 +468,20 @@ class DecisionEngine:
             )
         )
 
+        currency = str(
+            self._get(
+                state,
+                "home_currency",
+                "UNKNOWN",
+            )
+        )
+
         # ----------------------------------------------------
-        # AFFORDABILITY INFORMATION
+        # AFFORDABILITY
         # ----------------------------------------------------
 
         immediate_affordable = bool(
-            getattr(
+            self._get(
                 affordability,
                 "immediate_affordable",
                 False,
@@ -197,19 +489,43 @@ class DecisionEngine:
         )
 
         future_affordable = bool(
-            getattr(
+            self._get(
                 affordability,
                 "future_affordable",
                 False,
             )
         )
 
+        safe_amount = self._safe_float(
+            self._get(
+                affordability,
+                "amount_safe_to_pay",
+                0,
+            )
+        )
+
         # ----------------------------------------------------
-        # BASELINE FORECAST SAFETY
+        # IMPORTANT:
+        #
+        # amount_safe_to_pay must always be:
+        #
+        # 0 <= safe_amount <= requested_amount
         # ----------------------------------------------------
 
-        baseline_breach = bool(
-            getattr(
+        safe_amount = max(
+            0.0,
+            min(
+                safe_amount,
+                requested_amount,
+            ),
+        )
+
+        # ----------------------------------------------------
+        # FORECAST
+        # ----------------------------------------------------
+
+        reserve_breached = bool(
+            self._get(
                 forecast,
                 "reserve_breached",
                 False,
@@ -217,403 +533,413 @@ class DecisionEngine:
         )
 
         # ----------------------------------------------------
-        # GET PAYMENT PLAN
-        #
-        # Current optimizer:
-        #
-        #     PaymentPlan
-        #
-        # Old optimizer:
-        #
-        #     PaymentOptimizationResult.best_plan
+        # EARLIEST FULL PAYMENT DATE
         # ----------------------------------------------------
 
-        best_plan = self._extract_best_plan(
-            payment_result
-        )
-
-        plan_available = (
-            best_plan is not None
-            and self._valid_payment_method(
-                getattr(
-                    best_plan,
-                    "payment_method",
+        earliest_safe_date = (
+            self._to_timestamp(
+                self._get(
+                    affordability,
+                    "earliest_safe_date",
                     None,
                 )
             )
         )
 
+        if (
+            earliest_safe_date is None
+            and immediate_affordable
+        ):
+            earliest_safe_date = request_date
+
         # ----------------------------------------------------
-        # DEFAULT VALUES
+        # PAYMENT PLAN
         # ----------------------------------------------------
+
+        best_plan = (
+            self._extract_best_plan(
+                payment_result
+            )
+        )
+
+        payment_method = (
+            self._payment_method(
+                best_plan
+            )
+        )
+
+        payment_option_id = (
+            self._payment_option_id(
+                best_plan
+            )
+        )
+
+        payment_plan = (
+            self._plan_to_string(
+                best_plan
+            )
+        )
+
+        plan_safe = (
+            self._plan_is_safe(
+                best_plan
+            )
+        )
+
+        plan_by_deadline = (
+            self._plan_completes_by_deadline(
+                best_plan
+            )
+        )
+
+        # ----------------------------------------------------
+        # USER PAYMENT PREFERENCES
+        # ----------------------------------------------------
+
+        accepted_methods = self._get(
+            state,
+            "accepted_payment_methods",
+            [],
+        )
+
+        if accepted_methods is None:
+            accepted_methods = []
+
+        if isinstance(
+            accepted_methods,
+            str,
+        ):
+
+            accepted_methods = [
+                x.strip()
+                for x in accepted_methods.split(
+                    "|"
+                )
+                if x.strip()
+            ]
+
+        accepted_methods = [
+            str(x).strip()
+            for x in accepted_methods
+        ]
+
+        # ====================================================
+        # DEFAULT RESULT
+        # ====================================================
 
         decision = "not_affordable"
 
-        safe_amount = 0.0
+        final_method = None
+        final_option_id = None
+        final_plan = None
 
-        payment_method = None
-        payment_option_id = None
-        payment_plan = None
+        spending_changes = []
 
-        earliest_safe_date = None
+        reasons = []
 
-        spending_changes: List[str] = []
-
-        reasons: List[str] = []
+        warnings = []
 
         # ====================================================
-        # CASE 1 — FULL REQUEST IS AFFORDABLE NOW
+        # CASE 1
+        #
+        # FULL AMOUNT SAFE NOW
         # ====================================================
 
         if (
             immediate_affordable
             and future_affordable
-            and not baseline_breach
+            and not reserve_breached
         ):
 
-            decision = "affordable_now"
+            decision = (
+                "affordable_now"
+            )
 
             safe_amount = requested_amount
 
-            earliest_safe_date = request_date
+            earliest_safe_date = (
+                request_date
+            )
 
-            reasons = [
-                "The requested amount is safely affordable "
-                "on the request date.",
-                "The 90-day forecast remains above the "
-                "required minimum reserve.",
-            ]
+            # ------------------------------------------------
+            # Prefer optimizer's eligible plan.
+            # ------------------------------------------------
 
-            # -----------------------------------------------
-            # IMPORTANT:
-            #
-            # Even when full payment is affordable, the
-            # user's preferred payment method must be used.
-            #
-            # If Model 6 found a safe eligible plan,
-            # use it.
-            # -----------------------------------------------
+            if (
+                best_plan is not None
+                and plan_safe
+                and plan_by_deadline
+                and payment_method
+                in accepted_methods
+            ):
 
-            if plan_available:
-
-                payment_method = self._clean_string(
-                    getattr(
-                        best_plan,
-                        "payment_method",
-                        None,
-                    )
+                final_method = (
+                    payment_method
                 )
 
-                payment_option_id = self._clean_string(
-                    getattr(
-                        best_plan,
-                        "payment_option_id",
-                        None,
-                    )
+                final_option_id = (
+                    payment_option_id
                 )
 
-                payment_plan = self._format_plan(
-                    best_plan
+                final_plan = (
+                    payment_plan
                 )
 
-                # If the optimizer selected full payment,
-                # make the result explicit.
+            elif (
+                "full_payment"
+                in accepted_methods
+            ):
 
-                if payment_method == "full_payment":
-                    reasons.append(
-                        "Full payment is an eligible and safe "
-                        "payment method."
-                    )
+                final_method = (
+                    "full_payment"
+                )
 
-                elif payment_method == "installments":
-                    reasons.append(
-                        "An eligible installment plan is "
-                        "available and safe."
-                    )
-
-                elif payment_method == "partial_payment":
-                    decision = "affordable_with_plan"
-
-                    reasons.append(
-                        "The requested amount is affordable "
-                        "through the selected partial-payment plan."
-                    )
+                final_plan = (
+                    f"{request_date.strftime('%Y-%m-%d')}:"
+                    f"{requested_amount:g}"
+                )
 
             else:
 
-                # ------------------------------------------------
-                # FALLBACK:
-                #
-                # If no optimizer plan was returned but the
-                # purchase is fully affordable now, full payment
-                # is still the mathematically safe method.
-                #
-                # This is only used when the optimizer failed
-                # to provide a plan.
-                # ------------------------------------------------
-
-                payment_method = "full_payment"
-
-                payment_plan = self._build_full_payment_plan(
-                    request_date,
-                    requested_amount,
+                decision = (
+                    "not_affordable"
                 )
 
-                reasons.append(
-                    "No separate payment option was returned "
-                    "by the optimizer, so the safe full-payment "
-                    "method is used."
+                warnings.append(
+                    "The purchase is financially "
+                    "affordable now, but no eligible "
+                    "payment method is accepted by "
+                    "the user."
                 )
+
+            if decision == "affordable_now":
+
+                reasons.extend([
+                    "The requested amount is safely "
+                    "affordable on the request date.",
+                    "The 90-day forecast remains above "
+                    "the required minimum reserve.",
+                ])
 
         # ====================================================
-        # CASE 2 — NOT AFFORDABLE NOW, BUT SAFE PLAN EXISTS
+        # CASE 2
+        #
+        # SAFE PLAN EXISTS
         # ====================================================
 
-        elif plan_available and not baseline_breach:
+        if (
+            decision == "not_affordable"
+            and best_plan is not None
+            and plan_safe
+            and plan_by_deadline
+            and payment_method in accepted_methods
+        ):
 
-            payment_method = self._clean_string(
-                getattr(
-                    best_plan,
-                    "payment_method",
-                    None,
+            decision = (
+                "affordable_with_plan"
+            )
+
+            final_method = (
+                payment_method
+            )
+
+            final_option_id = (
+                payment_option_id
+            )
+
+            final_plan = (
+                payment_plan
+            )
+
+            reasons.extend([
+                "The full request can be completed "
+                "safely using an eligible payment plan.",
+                "The recommended plan stays within "
+                "the user's financial safety constraints.",
+            ])
+
+        # ====================================================
+        # CASE 3
+        #
+        # AFFORDABLE LATER
+        # ====================================================
+
+        if (
+            decision == "not_affordable"
+            and future_affordable
+            and earliest_safe_date is not None
+        ):
+
+            # Only use a future date if it is actually
+            # within the desired completion date.
+
+            deadline_ok = True
+
+            if desired_completion_date is not None:
+
+                deadline_ok = (
+                    earliest_safe_date
+                    <= desired_completion_date
                 )
-            )
 
-            payment_option_id = self._clean_string(
-                getattr(
-                    best_plan,
-                    "payment_option_id",
-                    None,
+            if deadline_ok:
+
+                decision = (
+                    "affordable_later"
                 )
-            )
-
-            candidate_plan = self._format_plan(
-                best_plan
-            )
-
-            # ------------------------------------------------
-            # Check whether the selected plan actually has
-            # payments.
-            # ------------------------------------------------
-
-            has_payments = bool(
-                candidate_plan
-                and candidate_plan != "none"
-            )
-
-            if has_payments:
-
-                # --------------------------------------------
-                # Find the last payment date.
-                # --------------------------------------------
-
-                last_payment_date = (
-                    self._last_payment_date(
-                        best_plan
-                    )
-                )
-
-                # --------------------------------------------
-                # A plan is only valid if it completes by the
-                # requested deadline.
-                # --------------------------------------------
-
-                completes_by_deadline = True
 
                 if (
-                    last_payment_date is not None
-                    and desired_completion_date is not None
+                    "full_payment"
+                    in accepted_methods
                 ):
-                    completes_by_deadline = (
-                        last_payment_date
-                        <= desired_completion_date
+
+                    final_method = (
+                        "wait"
                     )
 
-                # --------------------------------------------
-                # Partial payment must satisfy the challenge
-                # contract.
-                # --------------------------------------------
+                    final_plan = None
 
-                if payment_method == "partial_payment":
+                    reasons.extend([
+                        "The full amount is not safely "
+                        "payable today.",
+                        "The forecast indicates that the "
+                        "full amount becomes safe later.",
+                    ])
 
-                    partial_valid = (
-                        self._valid_partial_payment(
-                            request=request,
-                            best_plan=best_plan,
-                            requested_amount=requested_amount,
-                            request_date=request_date,
-                            desired_completion_date=(
-                                desired_completion_date
-                            ),
-                        )
+                else:
+
+                    warnings.append(
+                        "The full amount becomes safe later, "
+                        "but the user does not accept "
+                        "full payment."
                     )
-
-                    if partial_valid:
-
-                        decision = (
-                            "affordable_with_plan"
-                        )
-
-                        safe_amount = (
-                            self._extract_safe_amount(
-                                affordability,
-                                requested_amount,
-                            )
-                        )
-
-                        earliest_safe_date = (
-                            self._extract_earliest_date(
-                                affordability,
-                                forecast,
-                                request,
-                                requested_amount,
-                            )
-                        )
-
-                        payment_plan = (
-                            candidate_plan
-                        )
-
-                        reasons = [
-                            "The full request is not safely "
-                            "affordable as a single immediate payment.",
-                            "A valid partial-payment plan can "
-                            "complete the request safely by the "
-                            "requested deadline.",
-                        ]
-
-                    else:
-
-                        payment_method = None
-                        payment_option_id = None
-                        payment_plan = None
-
-                # --------------------------------------------
-                # Installment plan
-                # --------------------------------------------
-
-                elif payment_method == "installments":
-
-                    if completes_by_deadline:
-
-                        decision = (
-                            "affordable_with_plan"
-                        )
-
-                        safe_amount = (
-                            self._extract_safe_amount(
-                                affordability,
-                                requested_amount,
-                            )
-                        )
-
-                        earliest_safe_date = (
-                            self._extract_earliest_date(
-                                affordability,
-                                forecast,
-                                request,
-                                requested_amount,
-                            )
-                        )
-
-                        payment_plan = (
-                            candidate_plan
-                        )
-
-                        reasons = [
-                            "The full request is not safely "
-                            "affordable as a single immediate "
-                            "payment.",
-                            "A supplied installment option "
-                            "provides a safe way to complete "
-                            "the request.",
-                        ]
-
-                    else:
-
-                        payment_method = None
-                        payment_option_id = None
-                        payment_plan = None
 
         # ====================================================
-        # CASE 3 — FULL AMOUNT BECOMES SAFE LATER
+        # CASE 4
+        #
+        # NO SAFE OPTION
         # ====================================================
 
         if decision == "not_affordable":
 
-            later_date = (
-                self._find_earliest_safe_date(
-                    request=request,
-                    state=state,
-                    forecast=forecast,
-                    requested_amount=requested_amount,
-                )
+            final_method = (
+                "not_recommended"
             )
 
-            if later_date is not None:
+            final_option_id = None
+            final_plan = None
 
-                decision = "affordable_later"
+            safe_amount = max(
+                0.0,
+                min(
+                    safe_amount,
+                    requested_amount,
+                ),
+            )
 
-                safe_amount = (
-                    self._extract_safe_amount(
-                        affordability,
-                        requested_amount,
-                    )
+            reasons.extend([
+                "The full request cannot be completed "
+                "safely under the current financial "
+                "constraints.",
+                "No safe eligible payment method can "
+                "complete the request by the required "
+                "deadline.",
+            ])
+
+        # ====================================================
+        # SPECIAL RULE:
+        #
+        # affordable_later must use wait.
+        # ====================================================
+
+        if (
+            decision == "affordable_later"
+            and final_method is None
+        ):
+
+            if (
+                "full_payment"
+                in accepted_methods
+            ):
+
+                final_method = "wait"
+
+            else:
+
+                final_method = (
+                    "not_recommended"
                 )
 
-                earliest_safe_date = later_date
+        # ====================================================
+        # SAFETY CHECK FOR PAYMENT METHOD
+        # ====================================================
 
-                payment_method = "wait"
+        if final_method not in (
+            "full_payment",
+            "partial_payment",
+            "installments",
+            "wait",
+            "not_recommended",
+        ):
 
-                payment_option_id = None
+            final_method = (
+                "not_recommended"
+            )
 
-                payment_plan = "none"
-
-                reasons = [
-                    "The full requested amount is not "
-                    "safely affordable on the request date.",
-                    "The forecast identifies a later date "
-                    "when the full amount can be paid while "
-                    "maintaining the required reserve.",
-                ]
+            final_plan = None
 
         # ====================================================
-        # CASE 4 — NOT AFFORDABLE WITHIN FORECAST
+        # PAYMENT PLAN VALIDATION
         # ====================================================
+
+        if final_method == "not_recommended":
+
+            final_plan = None
+
+        # ====================================================
+        # FULL PAYMENT PLAN
+        # ====================================================
+
+        if (
+            final_method == "full_payment"
+            and final_plan is None
+        ):
+
+            if request_date is not None:
+
+                final_plan = (
+                    f"{request_date.strftime('%Y-%m-%d')}:"
+                    f"{requested_amount:g}"
+                )
+
+        # ====================================================
+        # WAIT
+        # ====================================================
+
+        if final_method == "wait":
+
+            final_plan = None
+
+        # ====================================================
+        # CONFIDENCE
+        # ====================================================
+
+        confidence = 0.90
 
         if decision == "not_affordable":
+            confidence = 0.95
 
-            safe_amount = (
-                self._calculate_safe_amount(
-                    state=state,
-                    forecast=forecast,
-                    requested_amount=requested_amount,
-                )
-            )
+        elif decision == "affordable_now":
+            confidence = 0.95
 
-            earliest_safe_date = None
+        elif decision == "affordable_with_plan":
+            confidence = 0.90
 
-            payment_method = "not_recommended"
-
-            payment_option_id = None
-
-            payment_plan = "none"
-
-            spending_changes = (
-                self._suggest_spending_changes(
-                    state
-                )
-            )
-
-            reasons = [
-                "The requested amount cannot be safely "
-                "supported within the current forecast.",
-                "No eligible payment plan provides a "
-                "safe solution within the requested deadline.",
-            ]
+        elif decision == "affordable_later":
+            confidence = 0.88
 
         # ====================================================
-        # SAFETY CLAMP
+        # FINAL CLAMP
         # ====================================================
 
         safe_amount = max(
@@ -625,1116 +951,43 @@ class DecisionEngine:
         )
 
         # ====================================================
-        # WARNINGS
+        # RETURN
         # ====================================================
-
-        warnings: List[str] = []
-
-        if baseline_breach:
-
-            warnings.append(
-                "The baseline 90-day forecast already "
-                "breaches the required minimum reserve."
-            )
-
-        affordability_warnings = getattr(
-            affordability,
-            "warnings",
-            None,
-        )
-
-        if affordability_warnings:
-
-            warnings.extend(
-                str(x)
-                for x in affordability_warnings
-            )
-
-        payment_warnings = getattr(
-            payment_result,
-            "warnings",
-            None,
-        )
-
-        if payment_warnings:
-
-            warnings.extend(
-                str(x)
-                for x in payment_warnings
-            )
-
-        warnings = list(
-            dict.fromkeys(
-                warnings
-            )
-        )
-
-        # ====================================================
-        # CONFIDENCE
-        # ====================================================
-
-        confidence = self._calculate_confidence(
-            affordability=affordability,
-            payment_result=payment_result,
-            forecast=forecast,
-            decision=decision,
-        )
 
         return DecisionResult(
+
             request_id=request_id,
+
             user_id=user_id,
+
             currency=currency,
+
             decision=decision,
+
             safe_amount=safe_amount,
+
             requested_amount=requested_amount,
-            payment_method=payment_method,
-            payment_option_id=payment_option_id,
-            payment_plan=payment_plan,
+
+            payment_method=final_method,
+
+            payment_option_id=final_option_id,
+
+            payment_plan=final_plan,
+
             earliest_safe_date=earliest_safe_date,
+
             spending_changes=spending_changes,
+
             reasons=reasons,
+
             warnings=warnings,
+
             confidence=confidence,
         )
 
-    # ========================================================
-    # PAYMENT RESULT COMPATIBILITY
-    # ========================================================
-
-    @staticmethod
-    def _extract_best_plan(
-        payment_result: Any,
-    ) -> Any:
-        """
-        Support both current and old optimizer APIs.
-
-        Current:
-
-            PaymentPlan
-
-        Old:
-
-            PaymentOptimizationResult.best_plan
-        """
-
-        if payment_result is None:
-            return None
-
-        # Current PaymentPlan object.
-        if hasattr(
-            payment_result,
-            "payment_method",
-        ):
-            method = getattr(
-                payment_result,
-                "payment_method",
-                None,
-            )
-
-            if method not in (
-                None,
-                "",
-                "not_recommended",
-            ):
-                return payment_result
-
-        # Old wrapper object.
-        best_plan = getattr(
-            payment_result,
-            "best_plan",
-            None,
-        )
-
-        if best_plan is not None:
-
-            method = getattr(
-                best_plan,
-                "payment_method",
-                None,
-            )
-
-            if method not in (
-                None,
-                "",
-                "not_recommended",
-            ):
-                return best_plan
-
-        return None
-
-    # ========================================================
-    # PAYMENT METHOD VALIDATION
-    # ========================================================
-
-    @staticmethod
-    def _valid_payment_method(
-        method: Any,
-    ) -> bool:
-
-        return (
-            str(method).strip().lower()
-            in {
-                "full_payment",
-                "partial_payment",
-                "installments",
-            }
-        )
-
-    # ========================================================
-    # PARTIAL PAYMENT VALIDATION
-    # ========================================================
-
-    def _valid_partial_payment(
-        self,
-        request: Any,
-        best_plan: Any,
-        requested_amount: float,
-        request_date: Optional[pd.Timestamp],
-        desired_completion_date: Optional[pd.Timestamp],
-    ) -> bool:
-        """
-        Validate a partial-payment schedule.
-
-        The challenge requires exactly two payments:
-
-            request_date : safe amount
-
-        followed by:
-
-            earliest_safe_date : remaining amount
-        """
-
-        payments = getattr(
-            best_plan,
-            "payments",
-            [],
-        )
-
-        if len(payments) != 2:
-            return False
-
-        first = payments[0]
-        second = payments[1]
-
-        first_date = self._to_timestamp(
-            self._payment_value(
-                first,
-                "date",
-            )
-        )
-
-        second_date = self._to_timestamp(
-            self._payment_value(
-                second,
-                "date",
-            )
-        )
-
-        first_amount = self._safe_float(
-            self._payment_value(
-                first,
-                "amount",
-                0,
-            )
-        )
-
-        second_amount = self._safe_float(
-            self._payment_value(
-                second,
-                "amount",
-                0,
-            )
-        )
-
-        if (
-            request_date is not None
-            and first_date is not None
-            and first_date != request_date
-        ):
-            return False
-
-        if first_amount <= 0:
-            return False
-
-        if first_amount >= requested_amount:
-            return False
-
-        if abs(
-            (
-                first_amount
-                + second_amount
-            )
-            - requested_amount
-        ) > 0.01:
-
-            return False
-
-        if (
-            second_date is not None
-            and request_date is not None
-            and second_date < request_date
-        ):
-            return False
-
-        if (
-            desired_completion_date is not None
-            and second_date is not None
-            and second_date > desired_completion_date
-        ):
-            return False
-
-        return True
-
-    # ========================================================
-    # EARLIEST SAFE DATE
-    # ========================================================
-
-    def _find_earliest_safe_date(
-        self,
-        request: Any,
-        state: Any,
-        forecast: Any,
-        requested_amount: float,
-    ) -> Optional[pd.Timestamp]:
-        """
-        Find the first forecast date on which the user could
-        make the full payment and remain above the reserve.
-
-        This is independent of payment preferences.
-        """
-
-        minimum_balance = self._safe_float(
-            getattr(
-                state,
-                "minimum_balance_to_keep",
-                0,
-            )
-        )
-
-        daily_forecast = getattr(
-            forecast,
-            "daily_forecast",
-            [],
-        )
-
-        if daily_forecast is None:
-            return None
-
-        request_date = self._to_timestamp(
-            self._get(
-                request,
-                "request_date",
-            )
-        )
-
-        for day in daily_forecast:
-
-            day_date = self._to_timestamp(
-                getattr(
-                    day,
-                    "date",
-                    None,
-                )
-            )
-
-            projected_balance = self._safe_float(
-                getattr(
-                    day,
-                    "projected_balance",
-                    getattr(
-                        day,
-                        "balance",
-                        0,
-                    ),
-                )
-            )
-
-            if day_date is None:
-                continue
-
-            if (
-                request_date is not None
-                and day_date < request_date
-            ):
-                continue
-
-            if (
-                projected_balance
-                - requested_amount
-                >= minimum_balance
-            ):
-
-                return day_date
-
-        return None
-
-    # ========================================================
-    # SAFE AMOUNT
-    # ========================================================
-
-    def _calculate_safe_amount(
-        self,
-        state: Any,
-        forecast: Any,
-        requested_amount: float,
-    ) -> float:
-        """
-        Calculate the maximum amount that can be paid now
-        while preserving the minimum reserve.
-
-        Uses the most conservative projected balance.
-        """
-
-        minimum_balance = self._safe_float(
-            getattr(
-                state,
-                "minimum_balance_to_keep",
-                0,
-            )
-        )
-
-        daily_forecast = getattr(
-            forecast,
-            "daily_forecast",
-            [],
-        )
-
-        if daily_forecast:
-
-            balances = []
-
-            for day in daily_forecast:
-
-                value = getattr(
-                    day,
-                    "projected_balance",
-                    getattr(
-                        day,
-                        "balance",
-                        None,
-                    ),
-                )
-
-                if value is not None:
-
-                    balances.append(
-                        self._safe_float(
-                            value
-                        )
-                    )
-
-            if balances:
-
-                minimum_projected = min(
-                    balances
-                )
-
-                safe = (
-                    minimum_projected
-                    - minimum_balance
-                )
-
-                return max(
-                    0.0,
-                    min(
-                        safe,
-                        requested_amount,
-                    ),
-                )
-
-        # Fallback to current available balance.
-
-        current_balance = self._safe_float(
-            getattr(
-                state,
-                "available_balance",
-                getattr(
-                    state,
-                    "current_balance",
-                    0,
-                ),
-            )
-        )
-
-        safe = (
-            current_balance
-            - minimum_balance
-        )
-
-        return max(
-            0.0,
-            min(
-                safe,
-                requested_amount,
-            ),
-        )
-
-    # ========================================================
-    # EXTRACT SAFE AMOUNT FROM AFFORDABILITY
-    # ========================================================
-
-    def _extract_safe_amount(
-        self,
-        affordability: Any,
-        requested_amount: float,
-    ) -> float:
-        """
-        Read the safe amount from Model 5 when available.
-        """
-
-        possible_fields = [
-            "amount_safe_to_pay",
-            "safe_amount",
-            "max_safe_amount",
-            "safe_payment_amount",
-        ]
-
-        for field_name in possible_fields:
-
-            value = getattr(
-                affordability,
-                field_name,
-                None,
-            )
-
-            if value is not None:
-
-                value = self._safe_float(
-                    value
-                )
-
-                return max(
-                    0.0,
-                    min(
-                        value,
-                        requested_amount,
-                    ),
-                )
-
-        return 0.0
-
-    # ========================================================
-    # EXTRACT EARLIEST DATE
-    # ========================================================
-
-    def _extract_earliest_date(
-        self,
-        affordability: Any,
-        forecast: Any,
-        request: Any,
-        requested_amount: float,
-    ) -> Optional[pd.Timestamp]:
-        """
-        Try Model 5 first, then calculate from forecast.
-        """
-
-        possible_fields = [
-            "earliest_safe_date",
-            "earliest_date_for_full_payment",
-            "future_safe_date",
-        ]
-
-        for field_name in possible_fields:
-
-            value = getattr(
-                affordability,
-                field_name,
-                None,
-            )
-
-            if value is not None:
-
-                timestamp = self._to_timestamp(
-                    value
-                )
-
-                if timestamp is not None:
-                    return timestamp
-
-        return self._find_earliest_safe_date(
-            request=request,
-            state=type(
-                "StateProxy",
-                (),
-                {
-                    "minimum_balance_to_keep": 0
-                },
-            )(),
-            forecast=forecast,
-            requested_amount=requested_amount,
-        )
-
-    # ========================================================
-    # FORMAT PAYMENT PLAN
-    # ========================================================
-
-    @staticmethod
-    def _format_plan(
-        plan: Any,
-    ) -> str:
-        """
-        Convert PaymentPlan into required output format.
-
-        Required format:
-
-            YYYY-MM-DD:amount|YYYY-MM-DD:amount
-        """
-
-        if plan is None:
-            return "none"
-
-        payments = getattr(
-            plan,
-            "payments",
-            [],
-        )
-
-        if not payments:
-            return "none"
-
-        parts = []
-
-        for payment in payments:
-
-            date_value = (
-                DecisionEngine._payment_value(
-                    payment,
-                    "date",
-                )
-            )
-
-            amount_value = (
-                DecisionEngine._payment_value(
-                    payment,
-                    "amount",
-                    0,
-                )
-            )
-
-            timestamp = (
-                DecisionEngine._to_timestamp(
-                    date_value
-                )
-            )
-
-            if timestamp is None:
-                continue
-
-            amount = DecisionEngine._safe_float(
-                amount_value
-            )
-
-            parts.append(
-                f"{timestamp.strftime('%Y-%m-%d')}:{amount:g}"
-            )
-
-        if not parts:
-            return "none"
-
-        return "|".join(parts)
-
-    # ========================================================
-    # FULL PAYMENT PLAN
-    # ========================================================
-
-    @staticmethod
-    def _build_full_payment_plan(
-        request_date: Optional[pd.Timestamp],
-        amount: float,
-    ) -> str:
-        """
-        Build a simple full-payment schedule.
-        """
-
-        if request_date is None:
-            return "none"
-
-        return (
-            f"{request_date.strftime('%Y-%m-%d')}:"
-            f"{amount:g}"
-        )
-
-    # ========================================================
-    # LAST PAYMENT DATE
-    # ========================================================
-
-    @staticmethod
-    def _last_payment_date(
-        plan: Any,
-    ) -> Optional[pd.Timestamp]:
-
-        payments = getattr(
-            plan,
-            "payments",
-            [],
-        )
-
-        dates = []
-
-        for payment in payments:
-
-            value = (
-                DecisionEngine._payment_value(
-                    payment,
-                    "date",
-                )
-            )
-
-            timestamp = (
-                DecisionEngine._to_timestamp(
-                    value
-                )
-            )
-
-            if timestamp is not None:
-                dates.append(timestamp)
-
-        if not dates:
-            return None
-
-        return max(dates)
-
-    # ========================================================
-    # SPENDING CHANGES
-    # ========================================================
-
-    @staticmethod
-    def _suggest_spending_changes(
-        state: Any,
-    ) -> List[str]:
-        """
-        Return spending-change suggestions if the state model
-        exposes them.
-
-        This method deliberately does not invent event IDs.
-        """
-
-        possible_fields = [
-            "recommended_spending_changes",
-            "spending_changes",
-            "suggested_spending_changes",
-        ]
-
-        for field_name in possible_fields:
-
-            value = getattr(
-                state,
-                field_name,
-                None,
-            )
-
-            if value:
-
-                if isinstance(
-                    value,
-                    str,
-                ):
-                    return [
-                        value
-                    ]
-
-                try:
-
-                    return [
-                        str(x)
-                        for x in value
-                        if str(x).strip()
-                    ]
-
-                except TypeError:
-                    pass
-
-        return []
-
-    # ========================================================
-    # CONFIDENCE
-    # ========================================================
-
-    @staticmethod
-    def _calculate_confidence(
-        affordability: Any,
-        payment_result: Any,
-        forecast: Any,
-        decision: str,
-    ) -> float:
-        """
-        Calculate deterministic confidence.
-        """
-
-        score = 0.90
-
-        if getattr(
-            forecast,
-            "warnings",
-            None,
-        ):
-            score -= 0.10
-
-        affordability_warnings = getattr(
-            affordability,
-            "warnings",
-            None,
-        )
-
-        if affordability_warnings:
-
-            score -= min(
-                0.20,
-                0.05
-                * len(
-                    affordability_warnings
-                ),
-            )
-
-        if payment_result is None:
-
-            score -= 0.10
-
-        else:
-
-            best_plan = (
-                DecisionEngine._extract_best_plan(
-                    payment_result
-                )
-            )
-
-            if best_plan is None:
-
-                score -= 0.05
-
-        if decision == "not_affordable":
-
-            score -= 0.05
-
-        return round(
-            max(
-                0.0,
-                min(
-                    1.0,
-                    score,
-                ),
-            ),
-            2,
-        )
-
-    # ========================================================
-    # GENERIC GETTER
-    # ========================================================
-
-    @staticmethod
-    def _get(
-        obj: Any,
-        field: str,
-        default: Any = None,
-    ) -> Any:
-
-        if obj is None:
-            return default
-
-        if isinstance(
-            obj,
-            dict,
-        ):
-
-            return obj.get(
-                field,
-                default,
-            )
-
-        try:
-
-            return getattr(
-                obj,
-                field,
-                default,
-            )
-
-        except Exception:
-
-            return default
-
-    # ========================================================
-    # PAYMENT VALUE
-    # ========================================================
-
-    @staticmethod
-    def _payment_value(
-        payment: Any,
-        field: str,
-        default: Any = None,
-    ) -> Any:
-
-        if payment is None:
-            return default
-
-        if isinstance(
-            payment,
-            dict,
-        ):
-
-            return payment.get(
-                field,
-                default,
-            )
-
-        return getattr(
-            payment,
-            field,
-            default,
-        )
-
-    # ========================================================
-    # DATE NORMALIZATION
-    # ========================================================
-
-    @staticmethod
-    def _to_timestamp(
-        value: Any,
-    ) -> Optional[pd.Timestamp]:
-
-        if value is None:
-            return None
-
-        try:
-
-            if pd.isna(value):
-                return None
-
-        except (
-            TypeError,
-            ValueError,
-        ):
-            pass
-
-        try:
-
-            return pd.Timestamp(
-                value
-            ).normalize()
-
-        except (
-            TypeError,
-            ValueError,
-        ):
-
-            return None
-
-    # ========================================================
-    # SAFE FLOAT
-    # ========================================================
-
-    @staticmethod
-    def _safe_float(
-        value: Any,
-        default: float = 0.0,
-    ) -> float:
-
-        if value is None:
-            return default
-
-        try:
-
-            if pd.isna(value):
-                return default
-
-        except (
-            TypeError,
-            ValueError,
-        ):
-            pass
-
-        try:
-
-            return float(
-                value
-            )
-
-        except (
-            TypeError,
-            ValueError,
-        ):
-
-            return default
-
-    # ========================================================
-    # STRING CLEANING
-    # ========================================================
-
-    @staticmethod
-    def _clean_string(
-        value: Any,
-    ) -> Optional[str]:
-
-        if value is None:
-            return None
-
-        text = str(
-            value
-        ).strip()
-
-        if not text:
-            return None
-
-        return text
-
-    # ========================================================
-    # SAFE PAYMENT METHOD CHECK
-    # ========================================================
-
-    @staticmethod
-    def _payment_method_from_plan(
-        plan: Any,
-    ) -> Optional[str]:
-
-        if plan is None:
-            return None
-
-        method = getattr(
-            plan,
-            "payment_method",
-            None,
-        )
-
-        if method is None:
-            return None
-
-        method = str(
-            method
-        ).strip().lower()
-
-        if method in {
-            "full_payment",
-            "partial_payment",
-            "installments",
-        }:
-            return method
-
-        return None
-
 
 # ============================================================
-# REPORT
-# ============================================================
-
-def print_decision_report(
-    result: DecisionResult,
-) -> None:
-    """
-    Human-readable Model 7 report.
-    """
-
-    print()
-    print("=" * 70)
-    print("MODEL 7: FINAL DECISION")
-    print("=" * 70)
-
-    print(
-        f"\nRequest: {result.request_id}"
-    )
-
-    print(
-        f"User: {result.user_id}"
-    )
-
-    print(
-        f"Requested amount: "
-        f"{result.requested_amount:,.2f} "
-        f"{result.currency}"
-    )
-
-    print(
-        f"\nDECISION:"
-    )
-
-    print(
-        f"  {result.decision.upper()}"
-    )
-
-    print(
-        f"\nSafe amount: "
-        f"{result.safe_amount:,.2f} "
-        f"{result.currency}"
-    )
-
-    if result.payment_method:
-
-        print(
-            f"\nPayment method: "
-            f"{result.payment_method}"
-        )
-
-    if result.payment_option_id:
-
-        print(
-            f"Payment option: "
-            f"{result.payment_option_id}"
-        )
-
-    if result.payment_plan:
-
-        print(
-            "\nPayment plan:"
-        )
-
-        print(
-            f"  {result.payment_plan}"
-        )
-
-    if result.earliest_safe_date:
-
-        print(
-            f"\nEarliest safe date: "
-            f"{result.earliest_safe_date.strftime('%Y-%m-%d')}"
-        )
-
-    if result.spending_changes:
-
-        print(
-            "\nSuggested spending changes:"
-        )
-
-        for change in result.spending_changes:
-
-            print(
-                f"  - {change}"
-            )
-
-    if result.reasons:
-
-        print(
-            "\nWHY:"
-        )
-
-        for reason in result.reasons:
-
-            print(
-                f"  - {reason}"
-            )
-
-    if result.warnings:
-
-        print(
-            "\nWARNINGS:"
-        )
-
-        for warning in result.warnings:
-
-            print(
-                f"  - {warning}"
-            )
-
-    print(
-        f"\nConfidence: "
-        f"{result.confidence:.2f}"
-    )
-
-    print(
-        "\n" + "=" * 70
-    )
-
-
-# ============================================================
-# MODULE TEST
+# TEST
 # ============================================================
 
 if __name__ == "__main__":
@@ -1745,22 +998,11 @@ if __name__ == "__main__":
     )
     print("=" * 70)
 
+    engine = DecisionEngine()
+
     print()
     print(
         "DecisionEngine loaded successfully."
-    )
-
-    print()
-    print(
-        "PaymentPlan compatibility:"
-    )
-
-    print(
-        "  Current PaymentPlan API: supported"
-    )
-
-    print(
-        "  Legacy best_plan API: supported"
     )
 
     print()

@@ -1,2 +1,6 @@
 .env
 .venv/
+code/__pycache__/
+code/agent/__pycache__/
+code/evaluation/__pycache__/
+code/model/__pycache__/
