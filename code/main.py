@@ -412,7 +412,6 @@ def main():
             )
 
         except Exception as exc:
-
             failures.append(
                 (
                     request_id,
@@ -424,9 +423,9 @@ def main():
             )
 
             print(
-                "FAILED"
+                f"FAILED -> "
+                f"{type(exc).__name__}: {exc}"
             )
-
     # --------------------------------------------------------
     # Check row count
     # --------------------------------------------------------
