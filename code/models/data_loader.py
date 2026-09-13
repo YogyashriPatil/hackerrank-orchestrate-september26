@@ -721,6 +721,24 @@ class DatasetLoader:
                 else None
             ),
         ).copy()
+        # ========================================================
+    # DIRECT DATAFRAME ACCESS
+    # ========================================================
+
+    @property
+    def request_payment_options(self) -> pd.DataFrame:
+        """
+        Return the complete request payment-options dataset.
+
+        This provides backward-compatible access for models
+        that expect loader.request_payment_options.
+        """
+        if self.data is None:
+            raise RuntimeError(
+                "Dataset has not been loaded. Call load() first."
+            )
+
+        return self.data.request_payment_options
 
     # ========================================================
     # PAYMENT OPTION LOOKUPS

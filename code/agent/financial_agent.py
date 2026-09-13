@@ -62,8 +62,11 @@ class FinancialAgent:
             AffordabilityEngine()
         )
 
-        self.payment_optimizer = (
-            PaymentPlanOptimizer()
+        # self.payment_optimizer = (
+        #     PaymentPlanOptimizer()
+        # )
+        self.payment_optimizer = PaymentPlanOptimizer(
+            payment_options=self.loader.request_payment_options
         )
 
         self.decision_engine = (
